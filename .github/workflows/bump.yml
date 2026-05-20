@@ -6,8 +6,9 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: write       # push the bump branch
+  pull-requests: write  # open PR + enable auto-merge
+  actions: write        # dispatch test.yml against the new branch
 
 jobs:
   check-and-bump:
@@ -111,7 +112,9 @@ jobs:
         id: cpr
         uses: peter-evans/create-pull-request@v6
         with:
-          token: ${{ secrets.HOMEBREW_BUMP_PAT }}
+          # token defaults to GITHUB_TOKEN. PRs created with GITHUB_TOKEN don't
+          # auto-fire downstream workflows, so we explicitly dispatch test.yml
+          # in the next step.
           branch: bump-flowgo-${{ steps.latest.outputs.version }}
           commit-message: "chore: bump flowgo to ${{ steps.latest.outputs.version }}"
           title: "Bump flowgo to ${{ steps.latest.outputs.version }}"
@@ -129,10 +132,24 @@ jobs:
             bot
             release-bump
 
+      - name: Dispatch test workflow against the bump branch
+        if: steps.check.outputs.needed == 'true' && steps.cpr.outputs.pull-request-number
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # PRs from GITHUB_TOKEN don't trigger pull_request events, so the
+          # test workflow won't auto-run. Kick it off explicitly — the check
+          # runs report against the branch HEAD (same commit as the PR head),
+          # so branch protection still sees them.
+          gh workflow run test.yml \
+            --repo "${{ github.repository }}" \
+            --ref "bump-flowgo-${{ steps.latest.outputs.version }}"
+
       - name: Enable auto-merge on the PR
         if: steps.check.outputs.needed == 'true' && steps.cpr.outputs.pull-request-number
         env:
-          GH_TOKEN: ${{ secrets.HOMEBREW_BUMP_PAT }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           gh pr merge --auto --squash \
