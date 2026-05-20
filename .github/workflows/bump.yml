@@ -1,0 +1,141 @@
+name: Bump formula on new flowgo release
+
+on:
+  schedule:
+    - cron: "17 * * * *"  # hourly at :17 (avoid the busy top-of-hour)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check-and-bump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tap
+        uses: actions/checkout@v4
+
+      - name: Read current formula version
+        id: current
+        run: |
+          set -euo pipefail
+          version=$(grep -E '^\s*version\s+"' Formula/flowgo.rb | head -1 | sed -E 's/.*version\s+"([^"]+)".*/\1/')
+          if [ -z "$version" ]; then
+            echo "::error::Could not parse version from Formula/flowgo.rb"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch latest flowgo release
+        id: latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag=$(gh release view --repo lassediercks/flowgo --json tagName -q .tagName)
+          version=${tag#v}
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Decide whether bump is needed
+        id: check
+        run: |
+          set -euo pipefail
+          current="${{ steps.current.outputs.version }}"
+          latest="${{ steps.latest.outputs.version }}"
+          if [ "$current" = "$latest" ]; then
+            echo "Formula already at $current; nothing to do."
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Refuse to downgrade — sort -V puts the higher version last.
+          higher=$(printf '%s\n%s\n' "$current" "$latest" | sort -V | tail -1)
+          if [ "$higher" != "$latest" ]; then
+            echo "::warning::Latest release ($latest) is older than current formula ($current). Skipping."
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Bumping $current -> $latest"
+          echo "needed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Compute SHA256s and rewrite formula
+        if: steps.check.outputs.needed == 'true'
+        env:
+          NEW_TAG: ${{ steps.latest.outputs.tag }}
+          NEW_VERSION: ${{ steps.latest.outputs.version }}
+        run: |
+          set -euo pipefail
+          declare -A shas
+          for arch in darwin-arm64 darwin-amd64 linux-arm64 linux-amd64; do
+            url="https://github.com/lassediercks/flowgo/releases/download/${NEW_TAG}/flowgo-${NEW_TAG}-${arch}"
+            echo "Hashing $url"
+            sha=$(curl -sfL "$url" | sha256sum | awk '{print $1}')
+            if [ ${#sha} -ne 64 ]; then
+              echo "::error::Failed to fetch or hash $url (got '$sha')"
+              exit 1
+            fi
+            shas[$arch]=$sha
+          done
+
+          python3 <<PY
+          import os, re, sys
+          from pathlib import Path
+          p = Path("Formula/flowgo.rb")
+          src = p.read_text()
+          new_version = os.environ["NEW_VERSION"]
+          shas = {
+              "darwin-arm64": "${shas[darwin-arm64]}",
+              "darwin-amd64": "${shas[darwin-amd64]}",
+              "linux-arm64":  "${shas[linux-arm64]}",
+              "linux-amd64":  "${shas[linux-amd64]}",
+          }
+          src, n = re.subn(r'version "[^"]+"', f'version "{new_version}"', src, count=1)
+          if n != 1:
+              sys.exit("failed to find version line")
+          for arch, sha in shas.items():
+              pat = re.compile(
+                  r'(url\s+"[^"]*flowgo-v#\{version\}-' + re.escape(arch) + r'"\s*\n\s*sha256\s+)"[^"]+"'
+              )
+              src, n = pat.subn(r'\1"' + sha + '"', src)
+              if n != 1:
+                  sys.exit(f"failed to update sha256 for {arch} (matched {n} times)")
+          p.write_text(src)
+          PY
+
+          echo "--- updated Formula/flowgo.rb ---"
+          cat Formula/flowgo.rb
+
+      - name: Open pull request
+        if: steps.check.outputs.needed == 'true'
+        id: cpr
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.HOMEBREW_BUMP_PAT }}
+          branch: bump-flowgo-${{ steps.latest.outputs.version }}
+          commit-message: "chore: bump flowgo to ${{ steps.latest.outputs.version }}"
+          title: "Bump flowgo to ${{ steps.latest.outputs.version }}"
+          body: |
+            Automated bump triggered by detection of a new `lassediercks/flowgo` release.
+
+            - **Tag:** [`${{ steps.latest.outputs.tag }}`](https://github.com/lassediercks/flowgo/releases/tag/${{ steps.latest.outputs.tag }})
+            - **Previous formula version:** `${{ steps.current.outputs.version }}`
+            - **New formula version:** `${{ steps.latest.outputs.version }}`
+
+            All four SHA256s recomputed by downloading each release asset and `sha256sum`-ing it.
+
+            Auto-merge will fire once the `test` check passes on both macOS and Linux.
+          labels: |
+            bot
+            release-bump
+
+      - name: Enable auto-merge on the PR
+        if: steps.check.outputs.needed == 'true' && steps.cpr.outputs.pull-request-number
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_BUMP_PAT }}
+        run: |
+          set -euo pipefail
+          gh pr merge --auto --squash \
+            --repo "${{ github.repository }}" \
+            "${{ steps.cpr.outputs.pull-request-number }}" \
+            || echo "::warning::Could not enable auto-merge — make sure 'Allow auto-merge' is on in repo settings."

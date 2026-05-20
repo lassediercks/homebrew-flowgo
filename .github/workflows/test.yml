@@ -1,0 +1,50 @@
+name: test
+
+on:
+  pull_request:
+    paths:
+      - "Formula/**"
+      - ".github/workflows/test.yml"
+  push:
+    branches: [main]
+    paths:
+      - "Formula/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Homebrew
+        uses: Homebrew/actions/setup-homebrew@master
+
+      - name: brew audit --strict
+        run: brew audit --strict Formula/flowgo.rb
+
+      - name: brew install
+        run: brew install Formula/flowgo.rb
+
+      - name: brew test
+        run: brew test flowgo
+
+      - name: Sanity-check binary
+        run: |
+          set -euo pipefail
+          expected=$(grep -E '^\s*version\s+"' Formula/flowgo.rb | head -1 | sed -E 's/.*version\s+"([^"]+)".*/\1/')
+          actual=$(flowgo version)
+          echo "expected=$expected"
+          echo "actual=$actual"
+          case "$actual" in
+            *"$expected"*) echo "ok" ;;
+            *) echo "::error::flowgo version output did not contain $expected"; exit 1 ;;
+          esac
