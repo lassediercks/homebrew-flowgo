@@ -1,28 +1,28 @@
 class Flowgo < Formula
   desc "Browser-based mind-map editor backed by a plain-text file"
   homepage "https://github.com/lassediercks/flowgo"
-  version "0.3.11"
+  version "0.3.12"
   license "AGPL-3.0-only"
 
   on_macos do
     on_arm do
       url "https://github.com/lassediercks/flowgo/releases/download/v#{version}/flowgo-v#{version}-darwin-arm64"
-      sha256 "e2859d5763d5b0660c1f35e3cc672fc4886fc7900775d22fc10be6d1fa91ec01"
+      sha256 "b27a68879208a83b984746e8f7d04a6af2d72d26196b6c4353aec30d845b06eb"
     end
     on_intel do
       url "https://github.com/lassediercks/flowgo/releases/download/v#{version}/flowgo-v#{version}-darwin-amd64"
-      sha256 "749c02eb229ea101b867a0ce58ce1f92ee0b6dc212eb5f512cacd4b813b4889d"
+      sha256 "1047d83205614630fc93ead69ef12f763c8f3bc60bd375b35bef8a60deee20c6"
     end
   end
 
   on_linux do
     on_arm do
       url "https://github.com/lassediercks/flowgo/releases/download/v#{version}/flowgo-v#{version}-linux-arm64"
-      sha256 "13cf3113ed46f1d027fc78ec10310d2583ec3c1cec7ac304320b2d9dfc4c9fbd"
+      sha256 "7e4eeb13816e99d6b05ef216ee4d0bbf8a091eb1fbe9acd1e29e4016a1c06044"
     end
     on_intel do
       url "https://github.com/lassediercks/flowgo/releases/download/v#{version}/flowgo-v#{version}-linux-amd64"
-      sha256 "b42a21324b968dfabd8554437aac47de92f5aefdacf259304c59435993f43191"
+      sha256 "55ca67ec84d36db5861ea2145f708c074192638c790f830c60dd1575887d8a60"
     end
   end
 
